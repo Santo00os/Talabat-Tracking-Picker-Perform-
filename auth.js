@@ -153,6 +153,16 @@ async function reviewProfileRequest(userId, requestedPickerId, approved) {
     throw new Error("مراجعة طلبات الربط متاحة للمدير فقط.");
   }
   const requestRef = doc(db, "pickerProfileRequests", userId);
+  if (approved) {
+    const duplicateProfiles = await getDocs(query(
+      collection(db, "pickerAccounts"),
+      where("pickerId", "==", requestedPickerId),
+    ));
+    if (duplicateProfiles.docs.some((profile) => profile.id !== userId && profile.data().approved === true)) {
+      throw new Error("رقم الروستر مرتبط بحساب آخر بالفعل.");
+    }
+  }
+
   await runTransaction(db, async (transaction) => {
     const requestSnapshot = await transaction.get(requestRef);
     if (!requestSnapshot.exists() || requestSnapshot.data().status !== "pending") {
@@ -164,13 +174,12 @@ async function reviewProfileRequest(userId, requestedPickerId, approved) {
       throw new Error("تغيّر رقم الروستر بعد تحميل الطلب. حدّث قائمة الطلبات وراجعه من جديد.");
     }
     if (approved) {
-      const duplicateProfiles = await transaction.get(query(
-        collection(db, "pickerAccounts"),
-        where("pickerId", "==", freshRequest.requestedPickerId),
-      ));
-      if (duplicateProfiles.docs.some((profile) => profile.id !== userId && profile.data().approved === true)) {
+      const claimRef = doc(db, "pickerRosterClaims", freshRequest.requestedPickerId);
+      const claimSnapshot = await transaction.get(claimRef);
+      if (claimSnapshot.exists() && claimSnapshot.data().userId !== userId) {
         throw new Error("رقم الروستر مرتبط بحساب آخر بالفعل.");
       }
+      transaction.set(claimRef, { userId });
       transaction.set(doc(db, "pickerAccounts", userId), {
         email: freshRequest.email,
         pickerId: freshRequest.requestedPickerId,
